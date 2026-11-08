@@ -1,0 +1,17 @@
+# DUBWISE's build settings (fm1-base's tools/build.py, through ./build.sh)
+name = "DUBWISE"               # the build's files: app/build/dubwise.fwsc
+id_prefix = "FM-1_47"          # package identity: dev FM-1_4700, releases FM-1_47XXYYZZ (check it is not taken before a release)
+usb_manufacturer = "DUBWISE"
+usb_product = "DUBWISE FM-1"
+o2 = ["dub.c"]                 # the sound engine, at -O2
+words = "words.tsv"
+ble = false                    # no Bluetooth (yet)
+# the site
+tagline = "a dub sound system for the FM-1"
+repo = "https://github.com/hatch-blip/Fm1"
+licence = "MPL-2.0"
+credits = "Built on fm1-base and felucca-bsp, from Felucca by Leo Kuroshita (Hügelton Instruments)."
+# firmware.json, for firmware hubs (fm1-base docs/FIRMWARE-JSON.md); a release also needs install and screenshot
+author = "hatch-blip"
+description = "DUBWISE turns the M-VAVE FM-1 into a playable dub sound system. A riddim plays (one drop, rockers, steppers); the low keys play a sub bass you can loop, the high keys chop skank chords on the offbeat. Throw anything into the tape echo, wail on the siren, kick the spring reverb, sweep the DJ filter and drop the drums, bass and skank in and out like a mixing desk."
+tags = ["groovebox", "drum-machine", "synth"]

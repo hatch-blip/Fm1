@@ -1,0 +1,77 @@
+# DUBWISE in fm1-base's host simulator: app/build/host/dubwise_host app/tests/basic.txt app/build/host
+# (./build.sh --host first). Keys: 0..11 bass (F3..E4 play F1..E2), 12..26 skank (F4..G5 play F3..G4 chords).
+wait 600
+expect playing 0
+shot start.png
+# a stab while stopped, then the riddim
+key 14 down
+wait 100
+expect skank 55
+key 14 up
+tap PLAY
+wait 50
+expect playing 1
+# tempo, riddim, echo, spring
+spin SELECT 4
+expect bpm 80
+tap SEQ
+expect pattern 1
+spin PRESET 2
+expect pattern 0
+spin K1 5
+expect fb 65
+spin K4 -2
+expect spring 32
+# record a bass note into the loop
+tap REC
+expect rec 1
+wav dub.wav
+wait 3000
+key 2 down
+wait 400
+expect bass 31
+key 2 up
+wait 3000
+tap REC
+expect rec 0
+# the desk: drums out and back, a throw, the siren
+tap ENV
+expect mute_drums 1
+press FX
+wait 20
+expect throw 1
+wait 600
+release FX
+tap ENV
+expect mute_drums 0
+press ARP
+wait 20
+expect siren 1
+wait 1500
+release ARP
+tap GLO
+# the filter: low-pass, then it snaps open crossing the middle
+spin K3 -6
+expect filter -6
+spin K3 8
+expect filter 0
+shot playing.png
+wait 2000
+wavstop
+# settings and the loop survive a reboot once saved
+tap SAVE
+wait 50
+expect dirty 0
+reboot
+wait 600
+expect bpm 80
+expect fb 65
+tap PLAY
+wait 50
+expect playing 1
+# REC held a second clears the loop
+press REC
+wait 1200
+release REC
+wait 50
+expect loop0 0
