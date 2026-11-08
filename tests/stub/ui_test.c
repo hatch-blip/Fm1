@@ -29,6 +29,8 @@ int plat_midi_in(uint32_t *pkt, int *port)
     *port = 0;
     return 1;
 }
+uint32_t plat_ticks24(void) { return t_ms * 24000u; }
+uint32_t plat_midi_in_t24(void) { return t_ms * 24000u; }   /* (landed as it is read) */
 void plat_midi_send(uint32_t pkt, uint32_t to)
 {
     (void)to;
@@ -137,8 +139,13 @@ int main(void)
     expect("throw", 0);
     expect("freeze", 1);
 
-    /* clock out while playing on our own tempo: about 24 a beat at 76 bpm */
+    /* clock out (off by default: a follower) while playing on our own tempo: about 24 a beat at 76 bpm */
+    expect("clock_out", 0);
+    press(B_SEL);
+    tap(B_PLAY);
+    release(B_SEL);
     expect("clock_out", 1);
+    expect("playing", 0);
     t_clocks_out = 0;
     tap(B_PLAY);
     expect("playing", 1);
@@ -180,15 +187,59 @@ int main(void)
         expect("playing", 0);
     }
 
+    /* a BeatStep Pro: channel 1 the bass, 2 the skank's stabs, 10 the drums; CCs work the desk */
+    {
+        static const uint32_t MSG[][3] = {
+            {0x90, 40, 100},             /* ch 1: bass */
+            {0x91, 60, 90},              /* ch 2: a stab */
+            {0x99, 36, 127},             /* ch 10: kick */
+            {0x99, 46, 80},              /* ch 10: open hat */
+            {0x94, 50, 100},             /* ch 5: someone else's synth */
+            {0xB1, 18, 127},             /* ch 2: auto dub 100 % */
+            {0xB0, 14, 0},               /* ch 1: the filter all the way low-pass */
+            {0xB9, 20, 127},             /* ch 10: throw held */
+            {0xB4, 19, 127},             /* ch 5: not ours */
+        };
+        uint32_t k;
+        for (k = 0; k < sizeof MSG / sizeof MSG[0]; k++)
+            t_midi_in[t_in_w++ % 256u] = (MSG[k][0] >> 4) | MSG[k][0] << 8 | MSG[k][1] << 16 | MSG[k][2] << 24;
+        run(100);
+        expect("bass", 40);
+        expect("stabs", 1);
+        expect("hits", 2);
+        expect("auto", 100);
+        expect("filter", -20);
+        expect("throw", 1);
+        expect("space", 8);
+        t_midi_in[t_in_w++ % 256u] = 0x0Bu | 0xB9u << 8 | 20u << 16;   /* throw let go */
+        t_midi_in[t_in_w++ % 256u] = 0x08u | 0x80u << 8 | 40u << 16;   /* bass off */
+        t_midi_in[t_in_w++ % 256u] = 0x08u | 0x80u << 8 | 36u << 16;   /* (and the one held since the clock test) */
+        t_midi_in[t_in_w++ % 256u] = 0x0Bu | 0xB1u << 8 | 18u << 16;   /* auto dub off again */
+        run(100);
+        expect("throw", 0);
+        expect("bass", -1);
+        expect("auto", 0);
+        press(B_SEL);                    /* the drums to channel 11, then a ch 10 note does nothing */
+        turn(EN_PRESET, 1);
+        release(B_SEL);
+        expect("ch2", 10);
+        expect("chord", CHORD_MAJ);
+        t_midi_in[t_in_w++ % 256u] = 0x09u | 0x99u << 8 | 36u << 16 | 100u << 24;
+        t_midi_in[t_in_w++ % 256u] = 0x09u | 0x9Au << 8 | 36u << 16 | 100u << 24;
+        run(100);
+        expect("hits", 3);
+    }
+
     /* saved and back after a reboot */
     tap(B_SAVE);
     expect("dirty", 0);
     memset(&set, 0, sizeof set);
     app_init();
-    expect("auto", 40);
+    expect("auto", 0);
     expect("warp", 20);
     expect("clock_out", 0);
     expect("chord", CHORD_MAJ);
+    expect("ch2", 10);
     printf(fails ? "  %d FAILED\n" : "  all ok\n", fails);
     return fails != 0;
 }

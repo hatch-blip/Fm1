@@ -25,9 +25,9 @@ static void run_ms(uint32_t ms)          /* render ms milliseconds in device-siz
     uint32_t total = (uint32_t)((double)ms * DUB_SR / 1000.0), i;
     while (total) {
         uint32_t n = total < BLOCK ? total : BLOCK;
-        if (tick_iv > 0.0)               /* the ticks due, at the block's start (as the device reads MIDI) */
-            while (tick_next <= (double)frames) {
-                dub_midi_rt(0xF8);
+        if (tick_iv > 0.0)               /* the block's ticks, each at its frame (as the app stamps them) */
+            while (tick_next < (double)(frames + n)) {
+                dub_midi_rt(0xF8, (int32_t)(tick_next - (double)frames));
                 ticks_sent++;
                 tick_next += tick_iv;
             }
@@ -246,18 +246,32 @@ int main(int argc, char **argv)
     tick_next = (double)frames;
     run_ms(1000);                        /* the clock running, stopped */
     check(dubs.ext && !dubs.playing, "a clock coming in, not started");
-    dub_midi_rt(0xFA);
+    dub_midi_rt(0xFA, 0);
     ticks_sent = 0;
     run_ms(4000);
     printf("  following: %.1f bpm, %u ticks, step %d\n", dubs.bpm_now, ticks_sent, dubs.step);
-    check(dubs.bpm_now > 118.0f && dubs.bpm_now < 122.0f, "the clock's tempo, 120");
+    check(dubs.bpm_now > 119.8f && dubs.bpm_now < 120.2f, "the clock's tempo, 120 (to 0.2)");
     check(dubs.playing && dubs.step == (int)((ticks_sent - 1u) / 6u) % DUB_LOOP, "a step every 6 ticks from start");
-    dub_midi_rt(0xFC);
+    dub_midi_rt(0xFC, 0);
     run_ms(100);
     check(!dubs.playing, "MIDI stop");
     tick_iv = 0.0;                       /* the clock goes away: our own tempo again */
     run_ms(800);
     check(!dubs.ext && dubs.bpm_now == 76.0f, "back on our own tempo without a clock");
+
+    /* a sequencer on the band's clock: its stabs and drums, by MIDI */
+    {
+        uint32_t s0 = dubs.stabs, h0 = dubs.hits;
+        dubp.pattern = PAT_MIDI;
+        dub_event_isr(EV_DRUM, DUB_NV(36, 120), 10);
+        dub_event_isr(EV_DRUM, DUB_NV(42, 60), 100);
+        dub_event_isr(EV_DRUM, DUB_NV(77, 100), 120);   /* not a drum DUBWISE has: nothing */
+        dub_event_isr(EV_STAB, DUB_NV(55, 90), 200);
+        run_ms(600);
+        dub_event_isr(EV_DRUM, DUB_NV(39, 127), 0);     /* the clap: the spring's crash */
+        run_ms(1500);
+        check(dubs.hits - h0 == 3 && dubs.stabs - s0 == 1, "MIDI drums and stabs");
+    }
     check(dubs.peak < 0.02f, "tails die away after STOP");
 
     if (wav) {

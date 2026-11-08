@@ -21,13 +21,44 @@ Kuroshita (Hügelton Instruments).
 
 ## With the band
 
-- **MIDI clock in** (USB or TRS): when a clock comes in, DUBWISE follows its tempo, and Start, Stop and Continue run
-  it. The header shows **EXT**. If the clock stops, DUBWISE carries on at its own tempo.
-- **MIDI clock out** (USB): while it runs on its own tempo it sends clock, Start and Stop, so the rest of your rig can
-  follow it (header: **OUT**). Toggle it with **SEL + PLAY**.
-- **MIDI notes in**: notes below C3 play the bass, the rest play the skank. A sequencer or keyboard can drive both.
-- Already have drums? Press **ENV** to take DUBWISE's drums out, and just use the bass, skank, siren and echo.
-- **AUTO DUB** makes dub moves by itself, in time, so it keeps evolving while you play something else.
+DUBWISE is meant to sit in a rig as a follower: a sequencer drives it, and you dub it. It is set up for an
+**Arturia BeatStep Pro**'s defaults. Feed the BSP's MIDI out (directly or through a MIDI thru box) into the FM-1's
+TRS MIDI IN with a TRS-to-DIN adapter, or use USB.
+
+| From the sequencer | DUBWISE does |
+| --- | --- |
+| **Clock, Start, Stop, Continue** | Follows the tempo and transport (the header shows **EXT**). If the clock goes away, it carries on at its own tempo |
+| **Channel 1** (BSP sequencer 1) | **Bass**: held notes, glides when legato, velocity sets the level |
+| **Channel 2** (BSP sequencer 2) | **Skank stabs**: each note is a chord stab (the chord type from SEL), so the BSP plays the rhythm |
+| **Channel 10** (BSP drums) | **Drums** by General MIDI note: 36 kick, 37 / 38 / 40 rim, 42 / 44 hat, 46 open hat, and **39 (clap) / 49 / 57 kick the spring**. Velocity counts |
+| **CCs** on any of those channels | **The desk**: see below |
+
+All other channels are ignored, so the rest of the gear on the thru chain keeps its own.
+
+- **Timing:** incoming MIDI is stamped as it lands and played at that point in the audio block. Clock and notes keep
+  their spacing to within about a sample, at a constant ~6 ms of latency.
+- **Change the channels:** hold **SEL** and turn **SELECT** (bass), **ALGO** (skank) or **PRESET** (drums), from
+  1 to 16 or OFF. The header shows them while SEL is held (e.g. `B1 S2 D10`). Set bass and skank to the *same*
+  channel and that channel splits at C3: bass below, held skank chords above (chopped on the offbeats).
+- **Using the BSP's drums instead of DUBWISE's?** Choose the **MIDI** riddim (SEQ or PRESET): no internal drums,
+  the drum channel plays them all. Or keep a riddim and layer the BSP's drums on top.
+- **Clock out** is off by default. **SEL + PLAY** turns it on (USB only, since the FM-1 has no MIDI out jack), for
+  when DUBWISE should lead.
+
+### The desk from a controller (CC)
+
+Put the BSP in Control mode (or use any controller) on one of DUBWISE's channels:
+
+| CC | Does | CC | Does (64 and up = on) |
+| --- | --- | --- | --- |
+| 12 | Echo feedback | 20 | **Throw** (held) |
+| 13 | Echo time | 21 | **Freeze** |
+| 14 | DJ filter (64 = open, down low-pass, up high-pass) | 22 | **Siren** (held) |
+| 15 | Spring | 23 | Spring **crash** (each press) |
+| 16 | Shift | 24 | Drums out |
+| 17 | Warp | 25 | Bass out |
+| 18 | Auto dub | 26 | Skank out |
+| 19 | Space | | |
 
 ## Play it
 
@@ -41,7 +72,7 @@ The keyboard is split:
 | Button | Does |
 | --- | --- |
 | **PLAY** | Riddim on / off |
-| **SEQ** | Next riddim: ONE DROP, ROCKERS, STEPPERS |
+| **SEQ** | Next riddim: ONE DROP, ROCKERS, STEPPERS, MIDI (no drums of its own) |
 | **REC** | Record the bass into the 2-bar loop (lit while armed). **Hold 1 s**: clear the loop |
 | **FX** *(hold)* | **Echo throw**: rim, hats and skank all into the tape echo while held |
 | **ARP** *(hold)* | **Dub siren** |
@@ -50,7 +81,8 @@ The keyboard is split:
 | **SEL** *(tap)* | Skank chord: minor, major, minor 7 |
 | **SEL** *(hold)* | The **trippy page**: the knobs below change, see the next table |
 | **SEL + FX** | **Freeze** the tape: whatever is in the echo loops forever, nothing new goes in (lit FX) |
-| **SEL + PLAY** | MIDI clock out on / off |
+| **SEL + PLAY** | MIDI clock out on / off (off to start) |
+| **SEL** + SELECT / ALGO / PRESET | MIDI channel of the bass / skank / drums |
 | **OCT− / OCT+** | Keyboard octave |
 | **SAVE** | Keep the settings and the bass loop across power-off |
 
@@ -72,8 +104,6 @@ Hold **SEL** for the trippy page (its labels turn gold):
 | **K2 WARP** | Tape wow, flutter and wandering delay time, from subtle to seasick. It also bends the skank and the siren a little |
 | **K3 AUTO** | **Auto dub**: how hungry the robot engineer is. Off at 0; at 100 it makes a move every couple of beats. Its moves: THROW, DROP (a bar without drums), BASS OUT, SIREN, CRASH, JUMP (a new echo time, so the tape bends), DIP (a filter sweep down and back), SPIRAL (a burst of octave-shifted repeats). The screen names each move, and what it takes out shows red on the desk |
 | **K4 SPACE** | A slow four-stage phaser over the echo and the spring, its sweep a quarter turn apart left and right |
-
-MIDI in (USB or TRS): notes below C3 play the bass, the rest play the skank. Start and Stop start and stop the riddim.
 
 The white keys light up in turn with the 16 steps. The screen shows the riddim grid with its playhead, the bass loop,
 the desk (which channels are in), and the four knobs.

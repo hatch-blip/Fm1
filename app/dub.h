@@ -15,7 +15,7 @@
 #define DUB_SHIFT_N 7                    /* the echo's pitch shifts, dubp.shift: -12 -7 -5 0 +5 +7 +12 semitones */
 #define DUB_SHIFT_OFF 3
 
-enum { PAT_ONEDROP, PAT_ROCKERS, PAT_STEPPERS, PAT_N };
+enum { PAT_ONEDROP, PAT_ROCKERS, PAT_STEPPERS, PAT_MIDI, PAT_N };   /* PAT_MIDI: no drums of its own */
 enum { SIREN_WAIL, SIREN_WHOOP, SIREN_ALARM, SIREN_LASER, SIREN_N };
 enum { CHORD_MIN, CHORD_MAJ, CHORD_MIN7, CHORD_N };
 enum { ECHO_8, ECHO_8D, ECHO_4, ECHO_4D, ECHO_N };   /* the echo's time: 1/8, dotted 1/8, 1/4, dotted 1/4 */
@@ -24,8 +24,13 @@ enum { AUTO_NONE, AUTO_THROW, AUTO_DROP, AUTO_BASSOUT, AUTO_SIREN, AUTO_CRASH, A
 
 enum {                                   /* dub_event types */
     EV_BASS_ON = 1, EV_BASS_OFF, EV_SKANK_ON, EV_SKANK_OFF,
-    EV_PLAY, EV_STOP, EV_CRASH, EV_CLEAR_LOOP, EV_PANIC
+    EV_PLAY, EV_STOP, EV_CRASH, EV_CLEAR_LOOP, EV_PANIC,
+    EV_STAB,                             /* a skank chord at once (a sequencer plays the rhythm) */
+    EV_DRUM                              /* a drum by its General MIDI note: 35/36 kick, 37/38/40 rim, 42/44 hat,
+                                          * 46 open hat, 39/49/57 the spring's crash */
 };
+/* note events' arg: the note, and its velocity (1..127) << 8; 0 velocity counts as 100 */
+#define DUB_NV(note, vel) ((int32_t)(note) | (int32_t)(vel) << 8)
 
 typedef struct {                         /* written by the main loop, read once a block by the render */
     volatile int32_t bpm;                /* 60 .. 180: the tempo when no MIDI clock comes in */
@@ -63,6 +68,7 @@ typedef struct {                         /* written by the render, read by the U
     /* MIDI out, for the app to send after dub_render (same interrupt): clocks due, a start, a stop */
     uint32_t out_clocks;
     uint8_t out_start, out_stop;
+    volatile uint32_t stabs, hits;       /* MIDI stabs and drum hits played (for the tests and the screen) */
 } dub_state_t;
 
 extern dub_params_t dubp;
@@ -70,8 +76,10 @@ extern dub_state_t dubs;
 
 void dub_init(void);                     /* boot, before the audio starts (keeps dubp and dubs.loop) */
 void dub_event(uint32_t type, int32_t arg);       /* main loop: queued for the next block */
-void dub_event_isr(uint32_t type, int32_t arg);   /* audio interrupt, before dub_render: at once */
-void dub_midi_rt(uint32_t status);       /* audio interrupt: MIDI real time in (F8 clock, FA start, FB continue, FC stop) */
+/* audio interrupt, before dub_render: MIDI in, played at frame `at` of the coming block (0 .. block-1), so the
+ * messages keep their spacing (the app works it out from when each landed) */
+void dub_event_isr(uint32_t type, int32_t arg, int32_t at);
+void dub_midi_rt(uint32_t status, int32_t at);   /* real time: F8 clock, FA start, FB continue, FC stop */
 void dub_render(float *lr, uint32_t n);  /* audio interrupt: n interleaved stereo frames, about +-1 */
 const char *dub_pattern_name(int32_t p);
 const char *dub_siren_name(int32_t m);

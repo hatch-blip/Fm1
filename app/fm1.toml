@@ -6,6 +6,7 @@ usb_product = "DUBWISE FM-1"
 o2 = ["dub.c"]                 # the sound engine, at -O2
 words = "words.tsv"
 ble = false                    # no Bluetooth (yet)
+midi_stamp = true              # MIDI in stamped where it lands: the clock and notes placed in the block by time
 # the site
 tagline = "a dub sound system for the FM-1"
 repo = "https://github.com/hatch-blip/Fm1"

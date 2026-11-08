@@ -13,16 +13,18 @@
  *   SELECT tempo  ALGO siren  PRESET riddim  K1 echo feedback  K2 echo time  K3 filter  K4 spring
  *   SEL held:     K1 shift (the repeats transposed)  K2 warp  K3 auto dub  K4 space
  *                 FX freeze the tape   PLAY MIDI clock out on / off
- * It follows MIDI clock in (USB or TRS) when one comes, and plays with the rest of the band. */
+ *   SEL held:     SELECT / ALGO / PRESET the MIDI channels of the bass, the skank, the drums
+ * With the band (a BeatStep Pro's defaults): it follows MIDI clock in (USB or TRS); channel 1 plays the bass, 2 stabs
+ * the skank, 10 plays the drums (GM notes); CCs 12..26 on any of those channels work the desk (README.md). */
 #include "dub.h"
 
-#define SET_MAGIC 0x44554232u            /* "DUB2": the settings record; another magic loads defaults */
+#define SET_MAGIC 0x44554233u            /* "DUB3": the settings record; another magic loads defaults */
 typedef struct {
     uint32_t magic;
     uint8_t bpm, pattern, siren, chord, echo_div, fb, spring;
     int8_t octave;
     uint8_t shift, warp, auto_amt, space, clock_out;   /* the SEL page: shift index, the rest 0..100 %, clock 0/1 */
-    uint8_t rsv[3];
+    uint8_t ch[3];                       /* MIDI channels 0..15 (16: off) of the bass, the skank, the drums */
     uint8_t loop[DUB_LOOP];
 } settings_t;
 static settings_t set;
@@ -38,21 +40,49 @@ static uint8_t set_dirty;
 static float gain_now;
 static float buf[2 * APP_BLOCK];
 
-/* MIDI in, read here in the audio interrupt so the clock lands close to its time: notes below C3 play the bass, the
- * rest the skank; clock, start, continue and stop drive the riddim */
-static void midi_in(void)
+/* MIDI in, read here in the audio interrupt, each message placed in the coming block by when it landed (fm1.toml
+ * midi_stamp), so a clock and a sequencer keep their spacing to a sample or so: a constant one block late.
+ *   the bass channel: the bass (held notes, legato glides)
+ *   the skank channel: a chord stab on each note (the sequencer plays the rhythm); the same channel as the bass:
+ *     split at C3, the lower notes the bass, the upper ones skank held as the keys are (chopped on the offbeats)
+ *   the drum channel: the drums, by General MIDI note
+ *   CCs on any of them: the desk (cc_apply, in the main loop); real time: the clock, start, continue, stop */
+#define CCQ 64u
+static volatile uint32_t ccq[CCQ], ccq_w, ccq_r;   /* CCs for the main loop: number << 8 | value */
+
+static void midi_in(uint32_t n)
 {
-    uint32_t pkt;
+    uint32_t pkt, blk = n < APP_BLOCK ? n : APP_BLOCK, now = plat_ticks24();
     int port;
     while (plat_midi_in(&pkt, &port)) {
-        uint32_t st = (pkt >> 8) & 0xFFu, d1 = (pkt >> 16) & 0x7Fu, d2 = pkt >> 24;
-        int bass = d1 < 48u;
-        if (st >= 0xF8u)
-            dub_midi_rt(st);
-        else if ((st & 0xF0u) == 0x90u && d2)
-            dub_event_isr(bass ? EV_BASS_ON : EV_SKANK_ON, (int32_t)d1);
-        else if ((st & 0xF0u) == 0x80u || (st & 0xF0u) == 0x90u)
-            dub_event_isr(bass ? EV_BASS_OFF : EV_SKANK_OFF, (int32_t)d1);
+        uint32_t st = (pkt >> 8) & 0xFFu, d1 = (pkt >> 16) & 0x7Fu, d2 = pkt >> 24, ty = st & 0xF0u, ch = st & 0x0Fu;
+        uint32_t age = (now - plat_midi_in_t24()) / PLAT_TICKS_PER_US;   /* us since it landed */
+        int32_t at = (int32_t)blk - 1 - (int32_t)(age * 441u / 10000u);
+        int on = ty == 0x90u && d2, off = ty == 0x80u || (ty == 0x90u && !d2);
+        if (at < 0)
+            at = 0;
+        if (st >= 0xF8u) {
+            dub_midi_rt(st, at);
+            continue;
+        }
+        if (ty == 0xB0u && (ch == set.ch[0] || ch == set.ch[1] || ch == set.ch[2])) {
+            uint32_t w = ccq_w;
+            if (w - ccq_r < CCQ) {
+                ccq[w % CCQ] = d1 << 8 | (d2 & 0x7Fu);
+                ccq_w = w + 1u;
+            }
+            continue;
+        }
+        if (!on && !off)
+            continue;
+        if (ch == set.ch[0] && (ch != set.ch[1] || d1 < 48u))
+            dub_event_isr(on ? EV_BASS_ON : EV_BASS_OFF, DUB_NV(d1, d2), at);
+        else if (ch == set.ch[1] && ch == set.ch[0])
+            dub_event_isr(on ? EV_SKANK_ON : EV_SKANK_OFF, DUB_NV(d1, d2), at);
+        else if (ch == set.ch[1] && on)
+            dub_event_isr(EV_STAB, DUB_NV(d1, d2), at);
+        else if (ch == set.ch[2] && on)
+            dub_event_isr(EV_DRUM, DUB_NV(d1, d2), at);
     }
 }
 
@@ -73,7 +103,7 @@ void app_render(int32_t *lr, uint32_t n, uint32_t master_q12)
 {
     float gain = (float)master_q12 / 4096.0f * 8300000.0f;   /* MASTER, read once a block; 24-bit out */
     uint32_t done = 0, i;
-    midi_in();
+    midi_in(n);
     while (done < n) {
         uint32_t m = n - done > APP_BLOCK ? APP_BLOCK : n - done;
         dub_render(buf, m);
@@ -106,9 +136,10 @@ static void settings_defaults(void)
     set.warp = 0;
     set.auto_amt = 0;
     set.space = 0;
-    set.clock_out = 1;
-    for (i = 0; i < 3; i++)
-        set.rsv[i] = 0;
+    set.clock_out = 0;                   /* a follower by default: the band's clock leads */
+    set.ch[0] = 0;                       /* a BeatStep Pro's: sequencer 1, sequencer 2, drums */
+    set.ch[1] = 1;
+    set.ch[2] = 9;
     for (i = 0; i < DUB_LOOP; i++)
         set.loop[i] = 0;
 }
@@ -137,7 +168,8 @@ void app_init(void)
     if (plat_store_load(OBJ_SETTINGS, &set, sizeof set) != (int)sizeof set || set.magic != SET_MAGIC
         || set.bpm < 60 || set.bpm > 180 || set.pattern >= PAT_N || set.siren >= SIREN_N || set.chord >= CHORD_N
         || set.echo_div >= ECHO_N || set.fb > 110 || set.spring > 100 || set.octave < -2 || set.octave > 2
-        || set.shift >= DUB_SHIFT_N || set.warp > 100 || set.auto_amt > 100 || set.space > 100 || set.clock_out > 1)
+        || set.shift >= DUB_SHIFT_N || set.warp > 100 || set.auto_amt > 100 || set.space > 100 || set.clock_out > 1
+        || set.ch[0] > 16 || set.ch[1] > 16 || set.ch[2] > 16)
         settings_defaults();
     dub_init();
     settings_apply();
@@ -165,6 +197,7 @@ static struct {
     uint32_t rec_t;                      /* REC went down (0: not held, or its hold already acted) */
     uint8_t sel_used;                    /* SEL held and something done with it: no chord change on its release */
     uint32_t auto_seen;                  /* the robot's move count last shown */
+    uint8_t cc_throw, cc_siren;          /* held by a CC (a controller's pad or button) */
     int32_t last_step;
     uint8_t redraw;
 } ui;
@@ -272,11 +305,62 @@ static void play_toggle(void)
     }
 }
 
+static void ch_text(uint32_t c, char *t)   /* "1".."16", "OFF" */
+{
+    t[0] = 0;
+    if (c > 15u)
+        text_cat(t, "OFF");
+    else
+        int_text((int32_t)c + 1, t);
+}
+
+/* the CCs that came in (midi_in): the desk from a controller. 12 echo feedback, 13 echo time, 14 filter (64 open),
+ * 15 spring, 16 shift, 17 warp, 18 auto dub, 19 space; 64 and up: 20 throw, 21 freeze, 22 siren, 23 crash (each
+ * time it goes up), 24 25 26 drums / bass / skank out */
+static void cc_apply(void)
+{
+    static uint8_t crash_was;
+    while (ccq_r != ccq_w) {
+        uint32_t c = ccq[ccq_r % CCQ], cc = c >> 8, v = c & 0x7Fu, hi = v >= 64u;
+        ccq_r++;
+        switch (cc) {
+        case 12: set.fb = (uint8_t)(v * 110u / 127u); dubp.echo_fb = (float)set.fb / 100.0f; break;
+        case 13: set.echo_div = (uint8_t)(v * ECHO_N / 128u); dubp.echo_div = set.echo_div; break;
+        case 14: {
+            int32_t w = v >= 62u && v <= 66u ? 0 : ((int32_t)v - 64) * 20 / 63;
+            dubp.filter = (float)clamp(w, -20, 20) / 20.0f;
+            break;
+        }
+        case 15: set.spring = (uint8_t)(v * 100u / 127u); dubp.spring = (float)set.spring / 100.0f; break;
+        case 16: set.shift = (uint8_t)(v * DUB_SHIFT_N / 128u); dubp.shift = set.shift; break;
+        case 17: set.warp = (uint8_t)(v * 100u / 127u); dubp.warp = (float)set.warp / 100.0f; break;
+        case 18: set.auto_amt = (uint8_t)(v * 100u / 127u); dubp.auto_amt = (float)set.auto_amt / 100.0f; break;
+        case 19: set.space = (uint8_t)(v * 100u / 127u); dubp.space = (float)set.space / 100.0f; break;
+        case 20: ui.cc_throw = (uint8_t)hi; break;
+        case 21: dubp.freeze = (uint8_t)hi; break;
+        case 22: ui.cc_siren = (uint8_t)hi; break;
+        case 23:
+            if (hi && !crash_was)
+                dub_event(EV_CRASH, 0);
+            crash_was = (uint8_t)hi;
+            break;
+        case 24: dubp.mute_drums = (uint8_t)hi; break;
+        case 25: dubp.mute_bass = (uint8_t)hi; break;
+        case 26: dubp.mute_skank = (uint8_t)hi; break;
+        default: continue;
+        }
+        if (cc <= 19u)
+            set_dirty = 1;
+        ui.redraw = 1;
+    }
+}
+
 static void input(void)
 {
     uint32_t keys = plat_keys(), btn = plat_buttons(), down = btn & ~ui.btn, k, leds, key_leds;
     uint32_t sel = btn >> B_SEL & 1u;    /* SEL held: the second page */
     int32_t e;
+    cc_apply();
     for (k = 0; k < NKEYS; k++) {
         uint32_t bit = 1u << k;
         if ((keys & bit) && !(ui.keys & bit)) {
@@ -341,14 +425,14 @@ static void input(void)
         }
     }
     /* held: the throw and the siren, as long as the finger stays */
-    if ((uint8_t)(btn >> B_FX & 1u && !sel) != dubp.throw_on) {
-        dubp.throw_on = (uint8_t)(btn >> B_FX & 1u && !sel);
+    if ((uint8_t)((btn >> B_FX & 1u && !sel) || ui.cc_throw) != dubp.throw_on) {
+        dubp.throw_on = (uint8_t)((btn >> B_FX & 1u && !sel) || ui.cc_throw);
         if (dubp.throw_on)
             app_say("THROW", "");
         ui.redraw = 1;
     }
-    if ((uint8_t)(btn >> B_ARP & 1u) != dubp.siren_on) {
-        dubp.siren_on = (uint8_t)(btn >> B_ARP & 1u);
+    if ((uint8_t)(btn >> B_ARP & 1u || ui.cc_siren) != dubp.siren_on) {
+        dubp.siren_on = (uint8_t)(btn >> B_ARP & 1u || ui.cc_siren);
         if (dubp.siren_on)
             app_say("SIREN", dub_siren_name(dubp.siren_mode));
         ui.redraw = 1;
@@ -374,19 +458,33 @@ static void input(void)
         }
     }
     /* the encoders */
-    if ((e = plat_enc(EN_SELECT)) != 0) {
+    if (sel) {                           /* the SEL page's top row: the MIDI channels */
+        static const int ENC[3] = {EN_SELECT, EN_ALGO, EN_PRESET};
+        static const char *const WHAT[3] = {"BASS CH", "SKANK CH", "DRUM CH"};
+        uint32_t r;
+        for (r = 0; r < 3u; r++)
+            if ((e = plat_enc(ENC[r])) != 0) {
+                char t[8];
+                set.ch[r] = (uint8_t)clamp((int32_t)set.ch[r] + (e > 0 ? 1 : -1), 0, 16);
+                ch_text(set.ch[r], t);
+                app_say(WHAT[r], t);
+                ui.sel_used = 1;
+                set_dirty = 1;
+            }
+    }
+    if (!sel && (e = plat_enc(EN_SELECT)) != 0) {
         set.bpm = (uint8_t)clamp((int32_t)set.bpm + e, 60, 180);
         dubp.bpm = set.bpm;
         set_dirty = 1;
         say_int("TEMPO", set.bpm, " BPM");
     }
-    if ((e = plat_enc(EN_ALGO)) != 0) {
+    if (!sel && (e = plat_enc(EN_ALGO)) != 0) {
         set.siren = (uint8_t)(((int32_t)set.siren + e % SIREN_N + SIREN_N) % SIREN_N);
         dubp.siren_mode = set.siren;
         set_dirty = 1;
         app_say("SIREN", dub_siren_name(set.siren));
     }
-    if ((e = plat_enc(EN_PRESET)) != 0) {
+    if (!sel && (e = plat_enc(EN_PRESET)) != 0) {
         set.pattern = (uint8_t)(((int32_t)set.pattern + e % PAT_N + PAT_N) % PAT_N);
         dubp.pattern = set.pattern;
         set_dirty = 1;
@@ -498,10 +596,21 @@ static void draw(void)
         {
             char o[8];
             t[0] = 0;
-            text_cat(t, set.octave >= 0 ? "OCT +" : "OCT ");
-            int_text(set.octave, o);
-            text_cat(t, o);
-            cv_text(x + 10, 12, &FONT_XS, t, C_GRAY);
+            if (ui.btn >> B_SEL & 1u) {  /* SEL held: the MIDI channels (SELECT / ALGO / PRESET set them) */
+                static const char *const L[3] = {"B", " S", " D"};
+                uint32_t r;
+                for (r = 0; r < 3u; r++) {
+                    text_cat(t, L[r]);
+                    ch_text(set.ch[r], o);
+                    text_cat(t, o[0] == 'O' ? "-" : o);
+                }
+                cv_text(x + 8, 12, &FONT_XS, t, C_GOLD);
+            } else {
+                text_cat(t, set.octave >= 0 ? "OCT +" : "OCT ");
+                int_text(set.octave, o);
+                text_cat(t, o);
+                cv_text(x + 10, 12, &FONT_XS, t, C_GRAY);
+            }
         }
         int_text((int32_t)(dubs.bpm_now + 0.5f), t);
         x = cv_text(200 - text_w(&FONT_B, t), 6, &FONT_B, t, dubs.playing ? C_WHITE : C_GRAY);
@@ -731,6 +840,12 @@ int app_expect(const char *what, int *got)
         *got = set.clock_out;
     else if (!strcmp(what, "chord"))
         *got = set.chord;
+    else if (!strncmp(what, "ch", 2))   /* ch0 ch1 ch2: the bass, skank and drum channels (0-based, 16 off) */
+        *got = set.ch[atoi(what + 2) % 3];
+    else if (!strcmp(what, "stabs"))
+        *got = (int)dubs.stabs;
+    else if (!strcmp(what, "hits"))
+        *got = (int)dubs.hits;
     else if (!strcmp(what, "ext"))
         *got = dubs.ext;
     else if (!strcmp(what, "fb"))

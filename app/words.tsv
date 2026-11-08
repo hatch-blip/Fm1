@@ -20,3 +20,6 @@ SPACE	space
 FREEZE	freeze
 EXT	external clock
 OUT	clock out
+BASS CH	bass channel
+SKANK CH	skank channel
+DRUM CH	drum channel

@@ -29,6 +29,7 @@ static const pat_t PAT[PAT_N] = {
     {"ROCKERS", "x.......x.......", "....x.......x...", "x.xxx.x.x.xxx.xo", 1u << 4 | 1u << 12, 0.10f},
     {"STEPPERS", "x...x...x...x...", "........x.......", "x.o.x.o.x.o.x.o.", 1u << 2 | 1u << 6 | 1u << 10 | 1u << 14,
      0.0f},
+    {"MIDI", "................", "................", "................", 1u << 4 | 1u << 12, 0.0f},
 };
 
 static const int8_t SHIFT_SEMI[DUB_SHIFT_N] = {-12, -7, -5, 0, 5, 7, 12};
@@ -131,22 +132,27 @@ static void stack_push(stack_t *s, int32_t note)
 static inline int32_t stack_top(const stack_t *s) { return s->count ? s->n[s->count - 1] : -1; }
 
 /* ---------------------------------------------------------------- voices --- */
-static struct { float ph, aenv, penv; } kick;
-static struct { float ph1, ph2, e1, e2, en; } rim;
-static struct { float env, k, hp; } hat;
+static struct { float ph, aenv, penv, vel; } kick;
+static struct { float ph1, ph2, e1, e2, en, vel; } rim;
+static struct { float env, k, hp, vel; } hat;
 
 enum { OWN_NONE, OWN_LIVE, OWN_LOOP };
-static struct { float ph, freq, target, amp, gate; int32_t note; int owner; } bass;
+static struct { float ph, freq, target, amp, gate, vel; int32_t note; int owner; } bass;
 static stack_t bass_held, skank_held;
 
-static struct { float ph[4], inc[4]; int nv; float env, fenv, lo, band; } sk;
+static struct { float ph[4], inc[4]; int nv; float env, fenv, lo, band, vel; } sk;
 
 static struct { float ph, lfo, amp, lp; } siren;
 static float crash_env, crash_ph;
 
-static void kick_hit(void) { kick.ph = 0.0f; kick.aenv = 1.0f; kick.penv = 1.0f; }
-static void rim_hit(void) { rim.e1 = rim.e2 = rim.en = 1.0f; rim.ph1 = rim.ph2 = 0.0f; }
-static void hat_hit(int open) { hat.env = open ? 0.8f : 1.0f; hat.k = open ? k_hat_o : k_hat_c; }
+static void kick_hit(float v) { kick.ph = 0.0f; kick.aenv = 1.0f; kick.penv = 1.0f; kick.vel = v; }
+static void rim_hit(float v) { rim.e1 = rim.e2 = rim.en = 1.0f; rim.ph1 = rim.ph2 = 0.0f; rim.vel = v; }
+static void hat_hit(int open, float v) { hat.env = open ? 0.8f : 1.0f; hat.k = open ? k_hat_o : k_hat_c; hat.vel = v; }
+static inline float vel_of(int32_t arg)  /* a note event's velocity, 0..1 (0 given: 100) */
+{
+    int32_t v = (arg >> 8) & 0x7F;
+    return (float)(v ? v : 100) * (1.0f / 127.0f);
+}
 
 static void bass_play(int32_t note, int owner)
 {
@@ -159,6 +165,8 @@ static void bass_play(int32_t note, int owner)
     bass.note = note;
     bass.gate = 1.0f;
     bass.owner = owner;
+    if (owner == OWN_LOOP)
+        bass.vel = 1.0f;
     dubs.bass_note = note;
 }
 static void bass_release(void)
@@ -168,7 +176,7 @@ static void bass_release(void)
     dubs.bass_note = -1;
 }
 
-static void skank_hit(int32_t root)
+static void skank_hit(int32_t root, float vel)
 {
     static const int8_t IV[CHORD_N][4] = {{0, 3, 7, 12}, {0, 4, 7, 12}, {0, 3, 7, 10}};
     const int8_t *iv = IV[(uint32_t)dubp.chord % CHORD_N];
@@ -180,6 +188,7 @@ static void skank_hit(int32_t root)
     }
     sk.env = 1.0f;
     sk.fenv = 1.0f;
+    sk.vel = vel;
 }
 
 /* ------------------------------------------------------- the clock(s) --- */
@@ -187,7 +196,7 @@ static float seq_left;                   /* our own clock: samples to the next s
 static int32_t step = -1;
 static float bpm_eff = 76.0f;            /* the tempo running (ours or the MIDI clock's) */
 static uint32_t now_s;                   /* samples since boot, at this block's start */
-static uint32_t ext_last, ext_tick, ext_due;   /* MIDI clock: the last tick's time, ticks since start, steps due */
+static uint32_t ext_last, ext_tick;     /* MIDI clock: the last tick's time (samples), ticks since start */
 static float ext_iv;                     /* samples between ticks, smoothed */
 static uint8_t ext_have, ext_on;
 static float clk_left;                   /* our clock out: samples to the next tick */
@@ -250,13 +259,13 @@ static void fire_step(int32_t s, const pat_t *p)
     if ((ps & 3) == 0)
         auto_move();
     if (p->kick[ps] == 'x')
-        kick_hit();
+        kick_hit(1.0f);
     if (p->rim[ps] == 'x')
-        rim_hit();
+        rim_hit(1.0f);
     if (p->hat[ps] != '.')
-        hat_hit(p->hat[ps] == 'o');
+        hat_hit(p->hat[ps] == 'o', (ps & 2) ? 0.8f : 1.0f);
     if ((p->skank >> ps) & 1u && stack_top(&skank_held) >= 0)
-        skank_hit(stack_top(&skank_held));
+        skank_hit(stack_top(&skank_held), 1.0f);
     /* the loop: record what is held, then play what is there (a live note wins) */
     if (dubp.rec_on && rec_note >= 0) {
         dubs.loop[s] = rec_pending ? (uint8_t)rec_note : (uint8_t)DUB_TIE;
@@ -297,13 +306,15 @@ static void stop_all(void)
         au.left[m] = 0;
 }
 
-static void handle(uint32_t t, int32_t a)
+static void handle(uint32_t t, int32_t arg)
 {
     const pat_t *p = &PAT[(uint32_t)dubp.pattern % PAT_N];
+    int32_t a = arg & 0x7F;              /* the note (velocity above it) */
     switch (t) {
     case EV_BASS_ON:
         stack_push(&bass_held, a);
         bass_play(a, OWN_LIVE);
+        bass.vel = 0.55f + 0.45f * vel_of(arg);
         if (dubp.rec_on && dubs.playing && step >= 0) {   /* into the loop, on the nearest step */
             float frac = ext_on ? (float)(ext_tick % 6u) / 6.0f : 1.0f - seq_left / step_len(step, p);
             rec_note = a;
@@ -332,8 +343,30 @@ static void handle(uint32_t t, int32_t a)
     case EV_SKANK_ON:
         stack_push(&skank_held, a);
         if (!dubs.playing)
-            skank_hit(a);                /* stopped: a stab at once; playing: on the skank steps */
+            skank_hit(a, vel_of(arg));   /* stopped: a stab at once; playing: on the skank steps */
         break;
+    case EV_STAB:
+        skank_hit(a, vel_of(arg));
+        dubs.stabs++;
+        break;
+    case EV_DRUM: {
+        float v = vel_of(arg);
+        if (a == 35 || a == 36)
+            kick_hit(v);
+        else if (a == 37 || a == 38 || a == 40)
+            rim_hit(v);
+        else if (a == 42 || a == 44)
+            hat_hit(0, v);
+        else if (a == 46)
+            hat_hit(1, v);
+        else if (a == 39 || a == 49 || a == 57) {
+            crash_env = v;
+            crash_ph = 0.0f;
+        } else
+            break;
+        dubs.hits++;
+        break;
+    }
     case EV_SKANK_OFF:
         stack_pop(&skank_held, a);
         break;
@@ -342,7 +375,6 @@ static void handle(uint32_t t, int32_t a)
             step = DUB_LOOP - 1;
             seq_left = 0.0f;             /* own clock: step 0 at the next sample */
             ext_tick = 0;                /* MIDI clock: step 0 at the next tick */
-            ext_due = 0;
             clk_left = 0.0f;
             dubs.playing = 1;
             if (!ext_on && dubp.clock_out)
@@ -373,29 +405,51 @@ static void handle(uint32_t t, int32_t a)
     }
 }
 
-void dub_event_isr(uint32_t type, int32_t arg) { handle(type, arg); }
+/* MIDI in for the coming block, each at its frame: real time (RT) or a note event */
+#define TQ 96u
+static struct { uint32_t type; int32_t arg, at; uint8_t rt; } tq[TQ];
+static uint32_t tq_n, tq_r;
+static int32_t tq_last;
 
-void dub_midi_rt(uint32_t st)
+static void tq_put(uint8_t rt, uint32_t type, int32_t arg, int32_t at)
+{
+    if (tq_n >= TQ)
+        return;
+    if (at < tq_last)                    /* in arrival order: never earlier than the one before */
+        at = tq_last;
+    tq_last = at;
+    tq[tq_n].rt = rt;
+    tq[tq_n].type = type;
+    tq[tq_n].arg = arg;
+    tq[tq_n].at = at;
+    tq_n++;
+}
+void dub_event_isr(uint32_t type, int32_t arg, int32_t at) { tq_put(0, type, arg, at); }
+void dub_midi_rt(uint32_t status, int32_t at) { tq_put(1, status, 0, at); }
+
+static void rt(uint32_t st, uint32_t when, const pat_t *p)   /* a real-time message, at sample `when` */
 {
     if (st == 0xF8u) {                   /* a tick: 24 a beat, 6 a step */
         if (ext_have) {
-            uint32_t iv = now_s - ext_last;
+            uint32_t iv = when - ext_last;
             if (iv > 0u && iv < (uint32_t)SR) {
-                float f = (float)iv;     /* (ticks land on block edges: the smoothing evens them out) */
-                ext_iv = ext_iv > 0.0f ? ext_iv + (f - ext_iv) * 0.06f : f;
+                float f = (float)iv;
+                ext_iv = ext_iv > 0.0f ? ext_iv + (f - ext_iv) * 0.1f : f;
             }
         }
-        ext_last = now_s;
+        ext_last = when;
         ext_have = 1;
+        ext_on = 1;
         if (dubs.playing) {
             if (ext_tick % 6u == 0u)
-                ext_due++;
+                advance(p);              /* the step, on its tick */
             ext_tick++;
         }
     } else if (st == 0xFAu) {            /* start: from the top at the next tick */
         stop_all();
         ext_have = 1;
-        ext_last = now_s;
+        ext_on = 1;
+        ext_last = when;
         handle(EV_PLAY, 0);
     } else if (st == 0xFBu) {            /* continue: on from where it stopped */
         if (!dubs.playing) {
@@ -458,6 +512,7 @@ void dub_init(void)
     k_crash = dm_decay(0.06f, SR);
     bass.note = -1;
     bass.freq = bass.target = 55.0f;
+    bass.vel = 1.0f;
     dubs.step = -1;
     dubs.bass_note = -1;
     dubs.skank_note = -1;
@@ -524,15 +579,8 @@ void dub_render(float *lr, uint32_t n)
         bpm_eff = (float)dubp.bpm;
     dubs.ext = ext_on;
     dubs.bpm_now = bpm_eff;
-    if (ext_on) {                        /* the steps the clock brought, at this block's start */
-        while (ext_due) {
-            ext_due--;
-            if (dubs.playing)
-                advance(p);
-        }
+    if (ext_on)
         seq_left = step_base();          /* (if the clock stops, ours takes over a step later) */
-    }
-    run_own = dubs.playing && !ext_on;
 
     /* what the robot is doing, over what the hands are doing */
     dubs.auto_drums_out = au.left[AUTO_DROP] > 0;
@@ -588,6 +636,15 @@ void dub_render(float *lr, uint32_t n)
     for (i = 0; i < n; i++) {
         float kk, rr, hh, bb, ss, sr_, dry, echo_in, rev_in, echo_out, revl, revr, wet[2], out[2], wob;
 
+        /* MIDI in, at its frame */
+        while (tq_r < tq_n && tq[tq_r].at <= (int32_t)i) {
+            if (tq[tq_r].rt)
+                rt(tq[tq_r].type, now_s + i, p);
+            else
+                handle(tq[tq_r].type, tq[tq_r].arg);
+            tq_r++;
+        }
+        run_own = dubs.playing && !ext_on;
         /* the clock: ours, and its MIDI clock out */
         if (run_own) {
             seq_left -= 1.0f;
@@ -701,11 +758,11 @@ void dub_render(float *lr, uint32_t n)
         }
 
         /* the desk: channels, mutes, sends */
-        kk *= mute_g[0];
-        rr *= mute_g[0];
-        hh *= mute_g[0];
-        bb *= mute_g[1];
-        ss *= mute_g[2];
+        kk *= mute_g[0] * kick.vel;
+        rr *= mute_g[0] * rim.vel;
+        hh *= mute_g[0] * hat.vel;
+        bb *= mute_g[1] * bass.vel;
+        ss *= mute_g[2] * sk.vel;
         dry = 0.62f * kk + 0.55f * bb + 0.42f * rr + 0.22f * hh + 0.45f * ss + 0.22f * sr_;
         echo_in = 0.10f * rr + 0.22f * ss + 0.55f * sr_ + thr * (0.6f * rr + 0.4f * hh + 0.8f * ss);
 
@@ -836,6 +893,15 @@ void dub_render(float *lr, uint32_t n)
             lr[2 * i + a] = o;
         }
     }
+    while (tq_r < tq_n) {                /* (any left over, past the block's end: now) */
+        if (tq[tq_r].rt)
+            rt(tq[tq_r].type, now_s + n, p);
+        else
+            handle(tq[tq_r].type, tq[tq_r].arg);
+        tq_r++;
+    }
+    tq_n = tq_r = 0;
+    tq_last = 0;
     now_s += n;
     dubs.peak = peak;
 }
