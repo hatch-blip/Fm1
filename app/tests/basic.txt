@@ -55,6 +55,28 @@ spin K3 -6
 expect filter -6
 spin K3 8
 expect filter 0
+# the SEL page: shift, warp, auto dub, space; SEL + FX freezes; a SEL tap changes the chord
+press SEL
+spin K1 -3
+spin K2 5
+spin K3 10
+spin K4 5
+tap FX
+release SEL
+expect shift 2
+expect warp 20
+expect auto 40
+expect space 20
+expect freeze 1
+expect chord 0
+tap SEL
+expect chord 1
+wait 3000
+shot trippy.png
+press SEL
+tap FX
+release SEL
+expect freeze 0
 shot playing.png
 wait 2000
 wavstop

@@ -13,3 +13,10 @@ MIN7	minor seven
 MIN	minor
 MAJ	major
 BPM	B P M
+SHIFT	shift
+WARP	warp
+AUTO	auto dub
+SPACE	space
+FREEZE	freeze
+EXT	external clock
+OUT	clock out

@@ -1,15 +1,33 @@
 # DUBWISE
 
-**A dub sound system for the M-VAVE FM-1.** A riddim plays, you play the bass and the skank on top, and then you
-*dub it out*: throw hits into the tape echo, wail on the siren, kick the spring, sweep the filter, and drop
-channels in and out like a mixing desk.
+**A trippy dub sound system for the M-VAVE FM-1, made to play with a band.** It locks to your MIDI clock (or leads
+with its own), plays a riddim with bass and skank on top, and then *dubs it out*:
+
+- echo throws whose repeats spiral down or up in pitch
+- a seasick warped tape that you can freeze into an endless loop
+- a phaser swirling through the wet signal
+- a siren and a spring crash
+- a robot dub engineer that drops, throws and bends things on its own while your hands are on your other gear
 
 Built on [fm1-base](https://github.com/charlesvestal/fm1-base) (MPL-2.0) and felucca-bsp, from Felucca by Leo
 Kuroshita (Hügelton Instruments).
 
-> **Status: first draft, not yet run on an FM-1.** The sound engine runs and passes its checks on a computer
-> (`tests/dsp/render.c`); the app compiles against a stand-in of the platform. The device build, the host simulator
-> script (`app/tests/basic.txt`) and the CPU load on the FM-1 are still to be tried.
+> **Status: a draft that has not been run on an FM-1.** Checked on a computer so far:
+>
+> - the sound engine (`tests/dsp/render.c`)
+> - the app's controls against a fake panel (`tests/stub/ui_test.c`)
+>
+> Not tried yet: the device build, fm1-base's simulator script (`app/tests/basic.txt`), and the CPU load on the FM-1.
+
+## With the band
+
+- **MIDI clock in** (USB or TRS): when a clock comes in, DUBWISE follows its tempo, and Start, Stop and Continue run
+  it. The header shows **EXT**. If the clock stops, DUBWISE carries on at its own tempo.
+- **MIDI clock out** (USB): while it runs on its own tempo it sends clock, Start and Stop, so the rest of your rig can
+  follow it (header: **OUT**). Toggle it with **SEL + PLAY**.
+- **MIDI notes in**: notes below C3 play the bass, the rest play the skank. A sequencer or keyboard can drive both.
+- Already have drums? Press **ENV** to take DUBWISE's drums out, and just use the bass, skank, siren and echo.
+- **AUTO DUB** makes dub moves by itself, in time, so it keeps evolving while you play something else.
 
 ## Play it
 
@@ -29,7 +47,10 @@ The keyboard is split:
 | **ARP** *(hold)* | **Dub siren** |
 | **GLO** | **Kick the spring**: the spring-reverb crash |
 | **ENV / LFO / EDIT** | Drums / bass / skank in or out (lit = in): the dub drop |
-| **SEL** | Skank chord: minor, major, minor 7 |
+| **SEL** *(tap)* | Skank chord: minor, major, minor 7 |
+| **SEL** *(hold)* | The **trippy page**: the knobs below change, see the next table |
+| **SEL + FX** | **Freeze** the tape: whatever is in the echo loops forever, nothing new goes in (lit FX) |
+| **SEL + PLAY** | MIDI clock out on / off |
 | **OCT− / OCT+** | Keyboard octave |
 | **SAVE** | Keep the settings and the bass loop across power-off |
 
@@ -42,6 +63,15 @@ The keyboard is split:
 | **K2** | Echo time: 1/8, dotted 1/8, 1/4, dotted 1/4. Change it while the echo rings and the pitch bends like tape |
 | **K3** | DJ filter: turn left for low-pass, right for high-pass. It snaps open as it crosses the middle |
 | **K4** | Spring reverb level |
+
+Hold **SEL** for the trippy page (its labels turn gold):
+
+| Encoder | Sets |
+| --- | --- |
+| **K1 SHIFT** | Each echo repeat transposed: −12, −7, −5, OFF, +5, +7, +12 semitones. Repeats spiral down into the mud or up into the stars, and keep going if frozen |
+| **K2 WARP** | Tape wow, flutter and wandering delay time, from subtle to seasick. It also bends the skank and the siren a little |
+| **K3 AUTO** | **Auto dub**: how hungry the robot engineer is. Off at 0; at 100 it makes a move every couple of beats. Its moves: THROW, DROP (a bar without drums), BASS OUT, SIREN, CRASH, JUMP (a new echo time, so the tape bends), DIP (a filter sweep down and back), SPIRAL (a burst of octave-shifted repeats). The screen names each move, and what it takes out shows red on the desk |
+| **K4 SPACE** | A slow four-stage phaser over the echo and the spring, its sweep a quarter turn apart left and right |
 
 MIDI in (USB or TRS): notes below C3 play the bass, the rest play the skank. Start and Stop start and stop the riddim.
 
@@ -56,6 +86,9 @@ the desk (which channels are in), and the four knobs.
 4. Hold **FX** on a hit and let go. The repeats come back darker each time.
 5. Press **ENV** to drop the drums out under the echo, then press it again to slam them back in.
 6. Hold **ARP** for the siren, press **GLO** to crash the spring, and turn **K3** left for the underwater filter.
+7. Get weird: hold **SEL** and turn **K1** to −12, then throw a skank. The repeats tumble down in octaves. Press
+   **SEL + FX** to freeze them, and add **WARP** and **SPACE**.
+8. Go play your other instrument: turn up **AUTO** and let the robot dub it.
 
 ## The sound
 
@@ -64,7 +97,10 @@ the desk (which channels are in), and the four knobs.
 - **Skank:** four slightly detuned saws through a swept band-pass, a short "chk".
 - **Siren:** a softened square swept by a tempo-locked LFO.
 - **Tape echo:** 1.25 s of 16-bit tape. Each repeat is darker (low-pass) and leaner (high-pass) and saturates
-  softly. It has a little wow, and its time glides when changed.
+  softly. Its time glides when changed. There is a pitch shifter in its feedback loop (two crossfaded heads
+  sweeping a 36 ms window), so each pass is transposed again. Warp adds wow, flutter and drift. Freeze closes the
+  loop.
+- **Space:** first-order allpasses with feedback over the wet (echo and spring) only, so the dry riddim stays solid.
 - **Spring reverb:** six dispersive allpasses (the chirp) into two damped feedback loops, left and right.
 - **DJ filter:** a resonant state-variable filter over the whole mix.
 
@@ -97,14 +133,16 @@ hold **OCT−** while switching on to reach the USB updater.
 This runs:
 
 - **engine**: a scripted session through the sound engine alone, checked (silence before PLAY, the loop records and
-  plays back, the filter cuts, the tails die, no clipping or NaN), written to `build/dubwise-demo.wav`. Give it a
-  listen.
+  plays back, the filter cuts, a frozen tape holds, auto dub makes its moves, clock out is 24 per beat, a 120 BPM
+  clock is followed step for step, the tails die, no clipping or NaN), written to `build/dubwise-demo.wav`. Give it
+  a listen.
 - **app**: `app.c` compiles against `tests/stub/plat.h`.
+- **ui**: `app.c` and the engine together against a fake panel: the SEL page, freeze vs. throw, clock out, following
+  a MIDI clock with notes in, and the settings across a reboot.
 - **host**: with fm1-base in `base/`, the whole firmware in fm1-base's simulator, running `app/tests/basic.txt`.
 
 ## Ideas for next
 
-- Follow MIDI clock in, and send it out.
 - A "bubble" organ on the off-16ths, and a melodica-ish lead for the upper keys.
 - More riddims (nyabinghi, rub-a-dub), plus fills on the fourth bar.
 - Per-channel echo sends on a shift layer, and a "kill" on the echo input.

@@ -14,6 +14,8 @@ static inline int32_t clamp(int32_t v, int32_t lo, int32_t hi) { return v < lo ?
 uint32_t plat_ms(void); uint32_t plat_buttons(void); uint32_t plat_keys(void); int32_t plat_enc(int role);
 void plat_leds(uint32_t b, uint32_t k); void plat_glow(int on);
 int plat_midi_in(uint32_t *pkt, int *port);
+void plat_midi_send(uint32_t pkt, uint32_t to);
+#define TO_USB 1u
 int plat_store_load(int obj, void *p, uint32_t n); int plat_store_save(int obj, const void *p, uint32_t n);
 #define RGB(r, g, b) ((uint16_t)((((r) >> 3) << 11) | (((g) >> 2) << 5) | ((b) >> 3)))
 typedef struct { int h; } felucca_font_t;

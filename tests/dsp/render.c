@@ -13,6 +13,8 @@ static FILE *wav;
 static uint32_t frames;
 static double sumsq;
 static int bad;
+static double tick_iv, tick_next;        /* a MIDI clock coming in: samples between ticks (0: none) */
+static uint32_t ticks_sent, clocks_out;
 
 static void put16(FILE *f, uint32_t v) { fputc(v & 255, f); fputc(v >> 8 & 255, f); }
 static void put32(FILE *f, uint32_t v) { put16(f, v & 0xFFFF); put16(f, v >> 16); }
@@ -23,7 +25,15 @@ static void run_ms(uint32_t ms)          /* render ms milliseconds in device-siz
     uint32_t total = (uint32_t)((double)ms * DUB_SR / 1000.0), i;
     while (total) {
         uint32_t n = total < BLOCK ? total : BLOCK;
+        if (tick_iv > 0.0)               /* the ticks due, at the block's start (as the device reads MIDI) */
+            while (tick_next <= (double)frames) {
+                dub_midi_rt(0xF8);
+                ticks_sent++;
+                tick_next += tick_iv;
+            }
         dub_render(lr, n);
+        clocks_out += dubs.out_clocks;   /* (the app sends these) */
+        dubs.out_clocks = 0;
         for (i = 0; i < 2 * n; i++) {
             float s = lr[i];
             if (s != s || s > 1.0f || s < -1.0f) {
@@ -154,9 +164,100 @@ int main(int argc, char **argv)
         printf("  rms: open %.3f, low-passed %.3f, high-passed %.3f\n", open, lp, hp);
         check(lp < open * 0.7 && hp < open * 0.7, "the DJ filter cuts both ways");
     }
+
+    /* trippy: repeats spiralling down an octave, a warped tape, the phaser in the wet */
+    dubp.shift = 0;
+    dubp.warp = 0.8f;
+    dubp.space = 0.8f;
+    dub_event(EV_SKANK_ON, 58);
+    dubp.throw_on = 1;
+    run_ms(1600);
+    dubp.throw_on = 0;
+    dub_event(EV_SKANK_OFF, 58);
+    run_ms(3158);
+    dubp.shift = 6;                      /* and up */
+    dubp.throw_on = 1;
+    dub_event(EV_SKANK_ON, 55);
+    run_ms(800);
+    dubp.throw_on = 0;
+    dub_event(EV_SKANK_OFF, 55);
+    run_ms(3158);
+    dubp.shift = DUB_SHIFT_OFF;
+    dubp.warp = 0.0f;
+    dubp.space = 0.0f;
+
+    /* freeze: a throw caught on the tape, then everything else out: it keeps going */
+    dubp.echo_fb = 0.5f;
+    dub_event(EV_SKANK_ON, 55);
+    dubp.throw_on = 1;
+    run_ms(1579);
+    dubp.throw_on = 0;
+    dub_event(EV_SKANK_OFF, 55);
+    dubp.freeze = 1;
+    dubp.mute_drums = dubp.mute_bass = dubp.mute_skank = 1;
+    dubp.spring = 0.0f;
+    run_ms(500);
+    {
+        double a = rms_of(1000);
+        run_ms(4000);
+        double b = rms_of(1000);
+        printf("  freeze rms: %.4f, 5 s later %.4f\n", a, b);
+        check(a > 0.01 && b > a * 0.6, "a frozen tape holds");
+        dubp.freeze = 0;
+        run_ms(5000);
+        double c = rms_of(1000);
+        printf("  thawed, 5 s later %.4f\n", c);
+        check(c < b * 0.3, "thawed, it fades");
+    }
+    dubp.mute_drums = dubp.mute_bass = dubp.mute_skank = 0;
+    dubp.spring = 0.45f;
+
+    /* the robot: at full appetite it makes moves of its own */
+    {
+        uint32_t c0 = dubs.auto_count, seen = 0;
+        int b;
+        dubp.auto_amt = 1.0f;
+        for (b = 0; b < 32; b++) {       /* 8 bars, a beat at a time */
+            uint32_t c = dubs.auto_count;
+            run_ms(789);
+            if (dubs.auto_count != c)
+                seen |= 1u << dubs.auto_move;
+        }
+        dubp.auto_amt = 0.0f;
+        printf("  auto: %u moves in 8 bars, kinds seen %03X\n", dubs.auto_count - c0, seen);
+        check(dubs.auto_count - c0 >= 6 && __builtin_popcount(seen) >= 3, "auto dub moves");
+        run_ms(3158);                    /* (its last moves run out) */
+    }
+
+    /* clock out: 24 a beat on our own tempo */
+    dubp.clock_out = 1;
+    clocks_out = 0;
+    run_ms(3158);                        /* a bar at 76 */
+    printf("  clocks out in a bar: %u\n", clocks_out);
+    check(clocks_out >= 95 && clocks_out <= 97, "MIDI clock out at 24 per beat");
+    dubp.clock_out = 0;
+
     dub_event(EV_STOP, 0);
     run_ms(4000);
     check(!dubs.playing && dubs.step == -1, "STOP");
+
+    /* following a MIDI clock at 120: start, the steps on every sixth tick, the tempo, stop */
+    tick_iv = 44100.0 * 60.0 / (120.0 * 24.0);
+    tick_next = (double)frames;
+    run_ms(1000);                        /* the clock running, stopped */
+    check(dubs.ext && !dubs.playing, "a clock coming in, not started");
+    dub_midi_rt(0xFA);
+    ticks_sent = 0;
+    run_ms(4000);
+    printf("  following: %.1f bpm, %u ticks, step %d\n", dubs.bpm_now, ticks_sent, dubs.step);
+    check(dubs.bpm_now > 118.0f && dubs.bpm_now < 122.0f, "the clock's tempo, 120");
+    check(dubs.playing && dubs.step == (int)((ticks_sent - 1u) / 6u) % DUB_LOOP, "a step every 6 ticks from start");
+    dub_midi_rt(0xFC);
+    run_ms(100);
+    check(!dubs.playing, "MIDI stop");
+    tick_iv = 0.0;                       /* the clock goes away: our own tempo again */
+    run_ms(800);
+    check(!dubs.ext && dubs.bpm_now == 76.0f, "back on our own tempo without a clock");
     check(dubs.peak < 0.02f, "tails die away after STOP");
 
     if (wav) {
