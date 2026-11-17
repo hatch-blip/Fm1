@@ -139,17 +139,19 @@ settings.
 
 ## Build
 
-Once, add fm1-base (this commit is the one DUBWISE was written against):
+**On GitHub (no setup):** every push runs `.github/workflows/release.yml` on the shared FM-1 builder. Open the run
+under the repository's *Actions* tab and download **packages**: `dubwise.fwsc` is in it. A tag `vX.Y` makes a signed
+release (fill in `install` and `screenshot` in `app/fm1.toml` first).
 
-    git submodule add https://github.com/charlesvestal/fm1-base base
-    git -C base checkout b0976f295ccaeaf77a8053a5a785a9cc21f5345f
+**On your computer:** fm1-base is a submodule in `base/`, so after cloning run:
+
     git submodule update --init --recursive
 
 For the device you need the JieLi toolchain and the AC79 SDK (see fm1-base's README and `base/tools/get_toolchain.sh`)
 and Python with Pillow:
 
     ./build.sh                                  # app/build/dubwise.fwsc
-    python3 base/tools/fm1_install.py app/build/dubwise.fwsc
+    python3 base/tools/fm1_install.py app/build/dubwise.fwsc   # FM-1 on USB; needs: pip install mido python-rtmidi
     ./build.sh --host                           # the simulator: app/build/host/dubwise_host
     ./build.sh --web                            # the browser emulator: app/build/emu/
 
