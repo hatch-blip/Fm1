@@ -16,7 +16,7 @@ spin SELECT 4
 expect bpm 80
 tap SEQ
 expect pattern 1
-spin PRESET 2
+spin PRESET 3
 expect pattern 0
 spin K1 5
 expect fb 65

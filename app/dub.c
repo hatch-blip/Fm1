@@ -510,6 +510,18 @@ void dub_init(void)
     k_sk_a = dm_decay(0.075f, SR);
     k_sk_f = dm_decay(0.025f, SR);
     k_crash = dm_decay(0.06f, SR);
+    /* a clean start, also when the app restarts without the RAM cleared (a soft restart, the host's reboot) */
+    stop_all();
+    dubs.out_stop = dubs.out_start = 0;
+    dubs.out_clocks = 0;
+    ev_r = ev_w;
+    tq_n = tq_r = 0;
+    tq_last = 0;
+    ext_have = ext_on = 0;
+    bass_held.count = skank_held.count = 0;
+    bass_release();
+    sk.env = siren.amp = crash_env = 0.0f;
+    kick.aenv = rim.e2 = hat.env = 0.0f;
     bass.note = -1;
     bass.freq = bass.target = 55.0f;
     bass.vel = 1.0f;

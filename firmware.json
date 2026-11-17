@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "id": "dubwise",
+  "name": "DUBWISE",
+  "author": "hatch-blip",
+  "license": "MPL-2.0",
+  "tagline": "a dub sound system for the FM-1",
+  "description": "DUBWISE turns the M-VAVE FM-1 into a playable dub sound system. A riddim plays (one drop, rockers, steppers); the low keys play a sub bass you can loop, the high keys chop skank chords on the offbeat. Throw anything into the tape echo, wail on the siren, kick the spring reverb, sweep the DJ filter and drop the drums, bass and skank in and out like a mixing desk.",
+  "tags": ["groovebox", "drum-machine", "synth"],
+  "source": "https://github.com/hatch-blip/Fm1",
+  "hardware": {
+    "models": ["FM-1"],
+    "flash": ["856014", "B36014"],
+    "features": ["usb-audio-in", "usb-audio-out", "screen-reader"]
+  },
+  "credits": "Built on fm1-base and felucca-bsp, from Felucca by Leo Kuroshita (Hügelton Instruments)."
+}

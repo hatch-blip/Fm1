@@ -655,7 +655,7 @@ static void draw(void)
             if (s == st)
                 cv_rect(x - 1, y, 12, 18, dubp.rec_on ? C_RED : C_LINE);
             if (v > 0 && v < DUB_TIE) {
-                int32_t h = clamp(((int32_t)v - 24) * 16 / 36, 3, 16);
+                int32_t h = clamp(5 + ((int32_t)v - 28) * 11 / 24, 5, 16);   /* E1 .. E3 over the cell */
                 cv_rect(x, y + 17 - h, 10, h, dubp.mute_bass ? C_GRAY : C_GOLD);
             } else if (v == DUB_TIE) {
                 cv_rect(x - 2, y + 14, 12, 3, dubp.mute_bass ? C_GRAY : C_AMB);
